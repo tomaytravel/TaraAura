@@ -1,0 +1,131 @@
+body {
+    margin: 0;
+    overflow: hidden;
+    background-color: #000;
+    font-family: 'Noto Sans KR', sans-serif;
+    color: white;
+}
+
+#canvas-container {
+    width: 100vw;
+    height: 100vh;
+    display: block;
+}
+
+#ui-panel {
+    position: absolute;
+    top: 20px;
+    right: 20px;
+    width: 320px;
+    background: rgba(20, 20, 30, 0.85);
+    backdrop-filter: blur(10px);
+    padding: 20px;
+    border-radius: 10px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    max-height: 90vh;
+    overflow-y: auto;
+    box-shadow: 0 0 20px rgba(0,0,0,0.5);
+}
+
+h1 {
+    font-size: 1.2rem;
+    margin-top: 0;
+    text-align: center;
+    color: #4ade80;
+    border-bottom: 1px solid rgba(255,255,255,0.2);
+    padding-bottom: 10px;
+}
+
+h3 {
+    font-size: 0.9rem;
+    margin: 10px 0 5px 0;
+    color: #ddd;
+}
+
+.control-group {
+    margin-bottom: 15px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid rgba(255,255,255,0.1);
+}
+
+/* File Upload */
+.file-upload {
+    display: block;
+    background: #333;
+    color: white;
+    text-align: center;
+    padding: 8px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.9rem;
+    transition: background 0.3s;
+}
+.file-upload:hover { background: #444; }
+input[type="file"] { display: none; }
+#drop-zone-text {
+    font-size: 0.75rem;
+    text-align: center;
+    color: #888;
+    margin: 5px 0 0 0;
+}
+
+/* Buttons */
+.buttons {
+    display: flex;
+    gap: 5px;
+    justify-content: space-between;
+}
+button {
+    flex: 1;
+    background: #2a2a35;
+    color: white;
+    border: 1px solid #555;
+    padding: 6px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.8rem;
+}
+button:hover { background: #3a3a45; border-color: #777; }
+
+/* Type Buttons */
+.type-buttons {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 5px;
+}
+.type-btn.active {
+    background: #4ade80;
+    color: #000;
+    font-weight: bold;
+    border-color: #4ade80;
+}
+
+/* Sliders */
+.slider-wrapper {
+    margin-bottom: 8px;
+}
+.slider-label {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.8rem;
+    margin-bottom: 2px;
+}
+input[type=range] {
+    width: 100%;
+    accent-color: #4ade80;
+    height: 4px;
+    background: #444;
+    border-radius: 2px;
+    outline: none;
+}
+
+.status-display {
+    text-align: right;
+    font-size: 0.8rem;
+    color: #4ade80;
+    margin-top: 10px;
+}
+
+/* Custom Scrollbar */
+#ui-panel::-webkit-scrollbar { width: 6px; }
+#ui-panel::-webkit-scrollbar-thumb { background: #555; border-radius: 3px; }
