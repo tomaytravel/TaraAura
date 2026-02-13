@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tara Yogini Aura Visualizer</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div id="canvas-container"></div>
+
+    <div id="ui-panel">
+        <h1>Tara Aura Visualizer</h1>
+        
+        <div class="control-group">
+            <label class="file-upload">
+                이미지 업로드
+                <input type="file" id="file-input" accept="image/png, image/jpeg">
+            </label>
+            <p id="drop-zone-text">또는 이미지를 드래그하세요</p>
+        </div>
+
+        <div class="control-group buttons">
+            <button id="btn-restart">재시작 (Restart)</button>
+            <button id="btn-pause">일시정지/재생</button>
+            <button id="btn-reset">설정 초기화</button>
+        </div>
+
+        <div class="control-group type-select">
+            <h3>아우라 유형</h3>
+            <div class="type-buttons">
+                <button class="type-btn active" data-type="0">기본 (확장)</button>
+                <button class="type-btn" data-type="1">불꽃 (Flame)</button>
+                <button class="type-btn" data-type="2">물방울 (Drop)</button>
+                <button class="type-btn" data-type="3">페이드 (Fade)</button>
+            </div>
+        </div>
+
+        <div id="slider-container">
+            </div>
+
+        <div class="status-display">
+            시간: <span id="time-display">0.0</span>s
+        </div>
+    </div>
+
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js"
+            }
+        }
+    </script>
+    <script type="module" src="script.js"></script>
+</body>
+</html>
