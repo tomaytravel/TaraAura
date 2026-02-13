@@ -100,100 +100,191 @@ const fragmentShader = `
         return c.z * mix(K.xxx, clamp(p - K.xxx, 0.0, 1.0), c.y);
     }
 
+    // --- Random Function ---
+    float random (vec2 st) {
+        return fract(sin(dot(st.xy, vec2(12.9898,78.233))) * 43758.5453123);
+    }
+
     void main() {
         vec2 uv = vUv;
         vec4 texColor = texture2D(tDiffuse, uv);
-        
-        // --- Timeline Logic ---
-        // 0-8s: Growth, >60s: Lock
-        float timeFactor = uTime;
-        float growthPhase = smoothstep(0.0, 8.0, uTime); // 0 to 1 over 8 sec
-        float lockPhase = smoothstep(60.0, 62.0, uTime); // 0 to 1 after 60 sec
-        
-        // Lock phase reduces movement
-        float activeTime = uTime * (1.0 - lockPhase * 0.95); 
-        float activeSwim = uSwim * (1.0 - lockPhase);
-
-        // --- Aura Generation (Distance Field approx) ---
         float alpha = texColor.a;
-        float dist = 0.0;
-        float maxDist = uAuraSize * growthPhase; // Grow over time
-        
-        // Simple radial sampling for outline thickness
-        // Note: For a real SDF we'd precompute, but this acts as dynamic glow
-        const int SAMPLES = 16;
-        float noiseVal = snoise(uv * 5.0 + activeTime * uSwim) * 0.05;
-        
-        for(int i=0; i<SAMPLES; i++) {
-            float angle = float(i) * 6.28318 / float(SAMPLES);
-            vec2 offset = vec2(cos(angle), sin(angle)) * maxDist;
-            
-            // Apply breathing
-            offset *= 1.0 + sin(activeTime * 2.0 * uBreath) * 0.1;
-            
-            // Add noise distortion to sampling
-            offset += vec2(noiseVal * 0.5);
 
-            float neighborAlpha = texture2D(tDiffuse, uv + offset).a;
-            dist = max(dist, neighborAlpha);
+        // --- Timeline Factors ---
+        float growthPhase = smoothstep(0.0, 8.0, uTime); 
+        float lockPhase = smoothstep(60.0, 62.0, uTime); 
+        float activeTime = uTime * (1.0 - lockPhase * 0.95);
+        
+        // --- Output Variables ---
+        float auraAlpha = 0.0;
+        vec3 auraColor = vec3(1.0, 0.8, 0.4); // 기본 금색
+
+        // ==========================================
+        // TYPE 0 & 3: Basic & Fade (Radial Expansion)
+        // ==========================================
+        if (uType == 0 || uType == 3) {
+            float maxDist = uAuraSize * growthPhase;
+            const int SAMPLES = 12;
+            float noiseVal = snoise(uv * 3.0 + activeTime * uSwim) * 0.02;
+            
+            float accumulatedAlpha = 0.0;
+            
+            for(int i=0; i<SAMPLES; i++) {
+                float angle = float(i) * 6.28318 / float(SAMPLES);
+                // Basic: 원형으로 샘플링하여 확장
+                vec2 offset = vec2(cos(angle), sin(angle)) * maxDist;
+                
+                // Breath effect
+                offset *= 1.0 + sin(activeTime * 2.0 * uBreath) * 0.15;
+                // Swim effect
+                offset += vec2(noiseVal);
+
+                accumulatedAlpha += texture2D(tDiffuse, uv + offset).a;
+            }
+            // 평균화
+            auraAlpha = accumulatedAlpha / float(SAMPLES);
+            
+            // 본체 영역 빼기 (테두리만 남김)
+            auraAlpha = clamp(auraAlpha - alpha * 1.5, 0.0, 1.0);
+
+            // [TYPE 3: Fade Logic] 연기처럼 테두리가 사라짐
+            if (uType == 3) {
+                // 노이즈를 사용하여 외곽을 깎아먹음 (Erosion)
+                float fadeNoise = snoise(uv * 10.0 + vec2(0.0, -activeTime * 0.5));
+                float rimDist = auraAlpha; // 가장자리가 옅음
+                
+                // Fade Cycle: 시간에 따라 침식 범위가 변함
+                float cycle = (sin(activeTime) + 1.0) * 0.5; 
+                
+                // alpha 값이 낮은(외곽) 부분부터 투명해지도록 step 적용
+                float smokeMask = smoothstep(0.2 + cycle * 0.5, 0.8, rimDist + fadeNoise * 0.3);
+                auraAlpha *= smokeMask;
+            }
         }
-        
-        // Cut out the original image
-        float auraMask = dist - alpha;
-        auraMask = clamp(auraMask, 0.0, 1.0);
 
-        // --- Aura Coloring ---
-        vec3 auraColor = vec3(1.0, 0.9, 0.5); // Default Gold/Light
+        // ==========================================
+        // TYPE 1: Flame (Upward Distortion)
+        // ==========================================
+        else if (uType == 1) {
+            // UV를 위쪽으로 왜곡시킴 (Displacement)
+            // 노이즈가 위로 흐르도록 함
+            vec2 flameUV = uv;
+            
+            // Y축으로 갈수록 X축을 흔듬 (아지랑이)
+            float heat = snoise(vec2(uv.x * 5.0, uv.y * 2.0 - activeTime * 2.0 * uSwim));
+            flameUV.x += heat * 0.02;
+            
+            // 아래쪽 샘플링 (자신의 아래에 있는 픽셀을 가져옴 -> 위로 올라가는 효과)
+            float flameSize = uAuraSize * growthPhase * uFlameHeight * 3.0;
+            float fireDist = 0.0;
+            
+            // 수직 방향으로 여러번 샘플링하여 잔상(꼬리)를 만듬
+            for(int i=1; i<=8; i++) {
+                float f = float(i) / 8.0;
+                // 아래쪽 좌표를 바라봄
+                vec2 samplePos = flameUV - vec2(0.0, f * flameSize);
+                
+                // 위로 갈수록 좌우로 더 퍼지게
+                float spreadNoise = snoise(vec2(activeTime, float(i))) * 0.05 * f;
+                samplePos.x += spreadNoise;
+
+                float sampleAlpha = texture2D(tDiffuse, samplePos).a;
+                
+                // 거리에 따라 감쇠 (위쪽일수록 연하게)
+                fireDist += sampleAlpha * (1.0 - f); 
+            }
+            
+            fireDist /= 3.0; // 강도 조절
+            auraAlpha = clamp(fireDist - alpha, 0.0, 1.0);
+            
+            // 불꽃 끝부분을 날카롭게 (Threshold)
+            float flameShape = smoothstep(0.2, 0.5, auraAlpha);
+            auraAlpha = flameShape * uStrength;
+
+            // 불꽃 색상 (온도에 따라 변화)
+            vec3 hotColor = vec3(1.0, 0.9, 0.2); // 노랑
+            vec3 coolColor = vec3(1.0, 0.1, 0.0); // 빨강
+            auraColor = mix(coolColor, hotColor, heat * 0.5 + 0.5 + uFlameTemp * 0.5);
+        }
+
+        // ==========================================
+        // TYPE 2: Drop (Radial Particles)
+        // ==========================================
+        else if (uType == 2) {
+            // 본체 확장이 아님. 완전히 독립된 파티클 생성
+            // 1. Polar Coordinates 변환
+            vec2 center = vec2(0.5);
+            vec2 toCenter = uv - center;
+            float radius = length(toCenter);
+            float angle = atan(toCenter.y, toCenter.x);
+            
+            // 2. Grid 생성 (방사형)
+            // 시간에 따라 밖으로 밀어냄 (-activeTime)
+            float radialMove = radius * (10.0 / uDropSize) - activeTime * uDropSpeed * 3.0;
+            
+            // 3. 셀 나누기
+            float cellIndex = floor(radialMove);
+            float cellLocal = fract(radialMove); // 0~1 (하나의 물방울 내 진행도)
+            
+            // 4. 각 셀마다 랜덤성 부여 (물방울이 드문드문 나오게)
+            // 각도와 셀 인덱스를 섞어 랜덤값 생성
+            float randomVal = random(vec2(floor(angle * 5.0), cellIndex));
+            
+            // 5. 물방울 모양 만들기
+            // cellLocal이 0.5 근처일 때 밝음 (원형 펄스)
+            float dropShape = smoothstep(0.4, 0.5, cellLocal) * smoothstep(0.6, 0.5, cellLocal);
+            
+            // 랜덤값이 특정 임계값을 넘을 때만 물방울 생성 (밀도 조절)
+            float exist = step(0.7, randomVal); 
+            
+            // 6. 방향 제어 (옵션)
+            // 기본은 방사형(radial)이지만, uDropDir가 있으면 그쪽 마스크를 씌움
+            float dirMask = 1.0;
+            if (length(uDropDir) > 0.1) {
+                vec2 normDir = normalize(uDropDir);
+                float dotDir = dot(normalize(toCenter), normDir);
+                dirMask = smoothstep(0.0, 0.5, dotDir); // 방향에 맞는 쪽만 보임
+            }
+
+            // 7. 본체 내부에는 안 생기게 마스킹
+            // 타라 본체보다 조금 바깥부터 시작
+            float bodyDist = 0.0;
+            // 간단히 원형 거리로 체크하거나, 텍스처 알파를 반전시켜 곱함
+            float safeZone = smoothstep(0.1, 0.3, radius); 
+
+            auraAlpha = dropShape * exist * dirMask * safeZone * uStrength;
+            
+            // 본체 위에는 그리지 않음
+            auraAlpha *= (1.0 - alpha);
+            
+            // 물방울 색상 (약간 청록색)
+            auraColor = vec3(0.4, 0.8, 1.0);
+        }
+
+        // ==========================================
+        // 공통: 색상 수렴 및 최종 합성
+        // ==========================================
         
-        // Green Convergence Logic (Target Hue ~0.33)
+        // Green Convergence Logic
         vec3 hsv = rgb2hsv(auraColor);
-        // Mix current hue towards green based on uConv and Time
-        float targetHue = 0.33; 
-        // Oscillate hue during growth, stabilize later
-        float hueNoise = snoise(vec2(uTime * 0.1, 0.0)) * 0.1 * (1.0 - lockPhase);
-        hsv.x = mix(hsv.x, targetHue, uConv * growthPhase) + hueNoise;
+        float targetHue = 0.33; // Green
+        // 시간이 지날수록(growthPhase), 수렴강도(uConv)에 따라 녹색으로
+        hsv.x = mix(hsv.x, targetHue, uConv * growthPhase * 0.8);
         auraColor = hsv2rgb(hsv);
 
-        // --- Type Specific Logic ---
-        if (uType == 1) { // Flame
-            float flame = snoise(vec2(uv.x * 10.0, activeTime * 2.0));
-            float verticalFade = smoothstep(0.0, uFlameHeight, dist);
-            auraMask *= (1.0 + flame * 0.5) * verticalFade;
-            // Temp affects color (Red -> Orange -> Greenish)
-            auraColor = mix(vec3(1.0, 0.2, 0.0), vec3(0.2, 1.0, 0.2), uFlameTemp);
-        } 
-        else if (uType == 2) { // Droplet
-            vec2 center = vec2(0.5);
-            vec2 dir = normalize(uv - center);
-            // Use custom direction if defined length > 0
-            if (length(uDropDir) > 0.1) dir = normalize(uDropDir);
-            
-            float dropDist = dot(uv - center, dir);
-            float rings = sin(dropDist * 20.0 / uDropSize - activeTime * uDropSpeed * 5.0);
-            float ringMask = smoothstep(0.8, 1.0, rings);
-            
-            // Only show drops outside the body
-            auraMask = ringMask * (1.0 - alpha) * dist; 
-        }
-        else if (uType == 3) { // Fade Away
-            float fadeCycle = sin(activeTime * 2.0);
-            auraMask *= smoothstep(-1.0, 1.0, fadeCycle);
-        }
+        // Final Aura Color apply
+        vec3 finalAura = auraColor * auraAlpha;
 
-        // Apply Strength
-        auraMask *= uStrength;
-
-        // --- Final Composition ---
-        vec3 finalColor = mix(vec3(0.0), auraColor, auraMask);
-        
-        // Add Original Image on top
-        // Core Brightness boost during Lock Phase
-        float brightness = uCore + (lockPhase * 0.2); 
+        // Core Brightness (Lock Phase에 밝아짐)
+        float brightness = uCore + (lockPhase * 0.5);
         vec3 bodyColor = texColor.rgb * brightness;
-        
-        finalColor = mix(finalColor, bodyColor, alpha);
 
-        gl_FragColor = vec4(finalColor, max(alpha, auraMask));
+        // Composition: (Aura * Alpha) + (Body * Alpha)
+        // Premultiplied Alpha blending 느낌으로 합성
+        vec3 finalColor = finalAura + bodyColor * alpha;
+        float finalAlpha = max(auraAlpha, alpha);
+
+        gl_FragColor = vec4(finalColor, finalAlpha);
     }
 `;
 
