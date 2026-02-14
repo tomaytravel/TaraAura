@@ -7,14 +7,14 @@ body {
     color: white;
 }
 
-/* [핵심 수정] 캔버스를 배경으로 고정 */
+/* 캔버스를 배경으로 고정 */
 #canvas-container {
     position: fixed;
     top: 0;
     left: 0;
     width: 100%;
     height: 100%;
-    z-index: 0; /* 가장 아래쪽 레이어 */
+    z-index: 0; 
     display: block;
 }
 
@@ -24,7 +24,7 @@ body {
     top: 20px;
     right: 20px;
     width: 320px;
-    background: rgba(20, 20, 30, 0.85); /* 반투명 배경 */
+    background: rgba(20, 20, 30, 0.85);
     backdrop-filter: blur(10px);
     padding: 20px;
     border-radius: 10px;
@@ -32,14 +32,14 @@ body {
     max-height: 90vh;
     overflow-y: auto;
     box-shadow: 0 0 20px rgba(0,0,0,0.5);
-    z-index: 100; /* 캔버스(0)보다 훨씬 높은 값으로 설정 */
+    z-index: 100;
 }
 
 h1 {
     font-size: 1.2rem;
     margin-top: 0;
     text-align: center;
-    color: #4ade80; /* 밝은 녹색 포인트 */
+    color: #4ade80;
     border-bottom: 1px solid rgba(255,255,255,0.2);
     padding-bottom: 10px;
 }
@@ -56,7 +56,6 @@ h3 {
     border-bottom: 1px solid rgba(255,255,255,0.1);
 }
 
-/* 파일 업로드 버튼 */
 .file-upload {
     display: block;
     background: #333;
@@ -79,7 +78,6 @@ input[type="file"] { display: none; }
     margin: 8px 0 0 0;
 }
 
-/* 일반 버튼 그룹 */
 .buttons {
     display: flex;
     gap: 8px;
@@ -99,7 +97,6 @@ button {
 button:hover { background: #3a3a45; border-color: #999; }
 button:active { transform: translateY(1px); }
 
-/* 타입 선택 버튼 그리드 */
 .type-buttons {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -113,7 +110,6 @@ button:active { transform: translateY(1px); }
     box-shadow: 0 0 8px rgba(74, 222, 128, 0.4);
 }
 
-/* 슬라이더 스타일 */
 .slider-wrapper {
     margin-bottom: 10px;
 }
@@ -134,7 +130,6 @@ input[type=range] {
     cursor: pointer;
 }
 
-/* 시간 표시 */
 .status-display {
     text-align: right;
     font-size: 0.8rem;
@@ -143,7 +138,6 @@ input[type=range] {
     font-family: monospace;
 }
 
-/* 스크롤바 커스텀 */
 #ui-panel::-webkit-scrollbar { width: 6px; }
 #ui-panel::-webkit-scrollbar-track { background: transparent; }
 #ui-panel::-webkit-scrollbar-thumb { background: #555; border-radius: 3px; }
