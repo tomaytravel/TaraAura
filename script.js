@@ -34,7 +34,7 @@ const vertexShader = `
     }
 `;
 
-// --- Fragment Shader (Hollow, Slow, Wobbling Droplets) ---
+// --- Fragment Shader (Seamless Periodic Noise) ---
 const fragmentShader = `
     precision mediump float;
     uniform sampler2D tDiffuse;
@@ -83,12 +83,49 @@ const fragmentShader = `
         return v;
     }
 
-    // Caustics Pattern (Net)
-    float caustics(vec2 p, float t) {
+    // [NEW] Periodic Noise (Seamless on X axis)
+    // This fixes the cut/seam line on the left side of the aura
+    float pnoise(vec2 p, float period) {
+        vec2 i = floor(p);
+        vec2 f = fract(p);
+        f = f*f*(3.0-2.0*f);
+        
+        // Wrap X index using Modulo
+        // This ensures value at X=period matches value at X=0
+        float x0 = mod(i.x, period);
+        float x1 = mod(i.x + 1.0, period);
+        
+        // Standard Y hash
+        float n00 = hash(vec2(x0, i.y));
+        float n10 = hash(vec2(x1, i.y));
+        float n01 = hash(vec2(x0, i.y + 1.0));
+        float n11 = hash(vec2(x1, i.y + 1.0));
+        
+        return mix(mix(n00, n10, f.x), mix(n01, n11, f.x), f.y);
+    }
+
+    // [NEW] Periodic FBM
+    float pfbm(vec2 p) {
+        float v = 0.0;
+        float a = 0.5;
+        float period = 8.0; // Must match the texture scaling factor (normAngle * 8.0)
+        for (int i = 0; i < 5; i++) {
+            v += a * pnoise(p, period);
+            p *= 2.0;
+            period *= 2.0; // Period scales with frequency
+            a *= 0.5;
+        }
+        return v;
+    }
+
+    // [NEW] Seamless Caustics Pattern
+    float seamlessCaustics(vec2 p, float t) {
         vec2 q = p;
-        q.x += fbm(p + t * 0.1);
-        q.y += fbm(p - t * 0.1);
-        float n = fbm(q * 3.0);
+        // Use periodic noise for warping too, to prevent seams in distortion
+        q.x += pfbm(p + t * 0.1);
+        q.y += pfbm(p - t * 0.1);
+        
+        float n = pfbm(q * 3.0);
         float net = 1.0 - abs(n * 2.0 - 1.0);
         net = pow(net, 3.0); 
         return net;
@@ -169,10 +206,10 @@ const fragmentShader = `
         }
 
         // ==========================================
-        // TYPE 4: Hollow Droplet + Liquid Aura Border
+        // TYPE 4: Hollow Droplet + Seamless Liquid Border
         // ==========================================
         else if (uType == 4) {
-            // [LAYER 1] Background (Same as before)
+            // [LAYER 1] Water Caustics Background (Seamless)
             vec2 warpUV = uv;
             float wave = fbm(uv * 3.0 + activeTime * uSwim * 0.5); 
             warpUV += (vec2(wave) - 0.5) * 0.05; 
@@ -187,8 +224,10 @@ const fragmentShader = `
             }
             bgMask = smoothstep(0.2, 0.6, bgMask); 
 
+            // Use seamless logic here
             vec2 waterUV = vec2(normAngle * 8.0, radius * 2.0 - activeTime * 0.2);
-            float netPattern = caustics(waterUV, activeTime * 0.5);
+            float netPattern = seamlessCaustics(waterUV, activeTime * 0.5);
+            
             float bgAlpha = bgMask * netPattern * 0.4 * uStrength;
 
             // [LAYER 2] Hollow, Slow, Wobbling Droplets
@@ -197,8 +236,6 @@ const fragmentShader = `
             
             for(float i = 0.0; i < NUM_DROPS; i++) {
                 float seed = i * 17.54;
-                
-                // [FIX 2] Dramatically slower speed (0.08 mult)
                 float speedVar = 0.5 + hash(vec2(seed, 1.0)) * 0.5;
                 float t = activeTime * uDropSpeed * 0.08 * speedVar + seed; 
                 
@@ -209,60 +246,40 @@ const fragmentShader = `
                 float travelDist = cycle * 2.0; 
                 vec2 dropPos = center + vec2(cos(rndAngle), sin(rndAngle)) * travelDist;
                 
-                // [FIX 3] Dynamic Shape Distortion (Wobble) based on Swim speed
-                vec2 p = uv - dropPos; // Vector from center of drop
-                
-                // Wavelike breathing phase
+                // Dynamic Shape Distortion
+                vec2 p = uv - dropPos; 
                 float wavePhase = activeTime * uSwim * 2.0 + cycleIdx * 1.1;
-                
-                // Squash and Stretch (changes width/height ratio rhythmically)
                 float squashFactor = 1.0 + 0.25 * sin(wavePhase);
-                // Apply opposite scaling to x and y to maintain roughly same area
                 p.x *= sqrt(squashFactor);
                 p.y /= sqrt(squashFactor);
-
-                // Overall size fluctuation (breathing)
                 float sizeBreath = 1.0 + 0.15 * cos(wavePhase * 0.7);
-                
-                // Modified distance based on distorted vector
                 float d = length(p) / sizeBreath;
 
-
-                // [FIX 1] Hollow Ring Shape & Reduced Size
+                // Thinner Ring Thickness
                 float rndScale = 0.3 + 0.7 * hash(vec2(seed, 9.9));
-                // Reduced base size multiplier slightly (0.2 -> 0.15)
                 float outerRadius = uDropSize * 0.15 * rndScale * (1.0 - cycle * 0.6);
-                
-                // Ring thickness relative to radius
                 float ringThickness = outerRadius * 0.05; 
                 float innerRadius = outerRadius - ringThickness;
 
-                float edge = 0.005; // Sharpness
-
-                // Create Ring: Outer Circle - Inner Circle
+                float edge = 0.005; 
                 float outerCircle = smoothstep(outerRadius, outerRadius - edge, d);
                 float innerHole = smoothstep(innerRadius - edge, innerRadius, d);
                 float ring = outerCircle * innerHole;
 
-                // Fade out
                 ring *= smoothstep(1.0, 0.85, cycle);
                 
                 dropsAlpha = max(dropsAlpha, ring);
             }
 
-            // [COMBINE]
             auraAlpha = max(bgAlpha, dropsAlpha * uStrength);
             
-            // Color Logic (Simpler cyan for rings)
             vec3 waterBlue = vec3(0.0, 0.6, 1.0); 
             vec3 brightCyan = vec3(0.2, 1.0, 1.0); 
-            
-            // Rings are bright cyan, background is deeper blue
             auraColor = mix(waterBlue, brightCyan, smoothstep(0.0, 0.5, dropsAlpha));
         }
 
         // ==========================================
-        // TYPE 2: Ripple (Old "Droplet")
+        // TYPE 2: Ripple
         // ==========================================
         else if (uType == 2) { 
             float maxDist = uAuraSize * 2.0; 
