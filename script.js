@@ -34,7 +34,7 @@ const vertexShader = `
     }
 `;
 
-// --- Fragment Shader (Water Caustics + Droplets) ---
+// --- Fragment Shader (Watery Border & Random Drops) ---
 const fragmentShader = `
     precision mediump float;
     uniform sampler2D tDiffuse;
@@ -83,22 +83,14 @@ const fragmentShader = `
         return v;
     }
 
-    // [New] Domain Warped Noise for Caustics (Net pattern)
+    // Caustics Pattern (Net)
     float caustics(vec2 p, float t) {
-        // Warp coordinates
         vec2 q = p;
         q.x += fbm(p + t * 0.1);
         q.y += fbm(p - t * 0.1);
-        
-        // Use absolute value of noise to create "lines" or "ridges"
-        // standard noise is -1 to 1 or 0 to 1. 
-        // abs(noise - 0.5) creates zero-valleys in the middle -> lines.
         float n = fbm(q * 3.0);
-        
-        // Invert and sharpen to get a "Net" look
-        // Values near 0.5 become 0 (dark voids), edges become 1 (bright lines)
         float net = 1.0 - abs(n * 2.0 - 1.0);
-        net = pow(net, 3.0); // Sharpen the lines
+        net = pow(net, 3.0); 
         return net;
     }
 
@@ -177,46 +169,71 @@ const fragmentShader = `
         }
 
         // ==========================================
-        // TYPE 4: Real Droplet + Caustics Background
+        // TYPE 4: Real Droplet + Liquid Aura Border
         // ==========================================
         else if (uType == 4) {
-            // [LAYER 1] Water Caustics (Net Pattern) Background
-            // Create a polar mapped net pattern that flows outward
+            // [LAYER 1] Water Caustics Background (Undulating Border)
+            
+            // 1. Calculate Distortion for the Border
+            // Unlike Flame (jagged), Water needs smooth, low-freq warping.
+            vec2 warpUV = uv;
+            
+            // Create a smooth wave field
+            // uSwim slider controls the speed of the undulation
+            float wave = fbm(uv * 3.0 + activeTime * uSwim * 0.5); 
+            
+            // Distort the lookup coordinate slightly
+            warpUV += (vec2(wave) - 0.5) * 0.05; 
+
+            // 2. Sample Texture with Warped UV
+            // This makes the aura border wobble like liquid
+            float bgDist = uAuraSize * 2.5; 
+            float bgMask = 0.0;
+            
+            const int SAMPLES = 12;
+            for(int i=0; i<SAMPLES; i++) {
+                float a = float(i) * 6.28318 / float(SAMPLES);
+                vec2 offset = vec2(cos(a), sin(a)) * bgDist;
+                // Use warped UV here!
+                bgMask = max(bgMask, texture2D(tDiffuse, warpUV + offset).a);
+            }
+            bgMask = smoothstep(0.2, 0.6, bgMask); 
+
+            // 3. Draw Net Pattern inside the warped mask
             vec2 waterUV = vec2(normAngle * 8.0, radius * 2.0 - activeTime * 0.2);
             float netPattern = caustics(waterUV, activeTime * 0.5);
             
-            // Mask the net so it looks like an aura (Fades out at distance)
-            float bgDist = uAuraSize * 2.5; // Background radius
-            float bgMask = 0.0;
-            // Simple expansion for background
-            for(int i=0; i<8; i++) {
-                float a = float(i) * 6.28318 / 8.0;
-                vec2 offset = vec2(cos(a), sin(a)) * bgDist;
-                bgMask = max(bgMask, texture2D(tDiffuse, uv + offset).a);
-            }
-            bgMask = smoothstep(0.2, 0.6, bgMask); // Soft edge
-            
-            // Background is semi-transparent net
-            // 'uStrength' modulates opacity. We multiply by 0.4 to keep it subtle.
             float bgAlpha = bgMask * netPattern * 0.4 * uStrength;
 
-
-            // [LAYER 2] Discrete Droplets (Foreground)
+            // [LAYER 2] Discrete Droplets (Random Size & Slow)
             float dropsAlpha = 0.0;
             float highlights = 0.0; 
             const float NUM_DROPS = 15.0; 
             
             for(float i = 0.0; i < NUM_DROPS; i++) {
                 float seed = i * 17.54;
-                float speedVar = 0.8 + hash(vec2(seed, 1.0)) * 0.4;
-                float t = activeTime * uDropSpeed * speedVar + seed; 
+                
+                // [FIX 2] Slow Speed (Float gently)
+                // Reduced multiplier from 1.0 to 0.3
+                float speedVar = 0.5 + hash(vec2(seed, 1.0)) * 0.5;
+                float t = activeTime * uDropSpeed * 0.3 * speedVar + seed; 
+                
                 float cycle = fract(t); 
                 float cycleIdx = floor(t);
+                
+                // Position
                 float rndAngle = hash(vec2(seed, cycleIdx)) * 6.28318;
                 float travelDist = cycle * 2.0; 
                 vec2 dropPos = center + vec2(cos(rndAngle), sin(rndAngle)) * travelDist;
+                
+                // Distance field
                 float d = distance(uv, dropPos);
-                float baseSize = uDropSize * 0.2; 
+                
+                // [FIX 1] Random Size (1~3 relative scale)
+                // hash gives 0.0~1.0 -> map to 0.3~1.0 range
+                float rndScale = 0.3 + 0.7 * hash(vec2(seed, 9.9));
+                
+                float baseSize = uDropSize * 0.2 * rndScale; 
                 float currentSize = baseSize * (1.0 - cycle * 0.8); 
                 
                 float circle = smoothstep(currentSize, currentSize - 0.005, d);
@@ -230,21 +247,16 @@ const fragmentShader = `
                 highlights = max(highlights, shine * circle); 
             }
 
-            // [COMBINE LAYERS]
-            // We use max() to blend them. 
-            // The droplets are solid (high alpha), background is ghosty (low alpha).
+            // [COMBINE]
             auraAlpha = max(bgAlpha, dropsAlpha * uStrength);
             
             // Color Logic
-            vec3 waterBlue = vec3(0.0, 0.6, 1.0); // Deep Blue
-            vec3 waterCyan = vec3(0.0, 0.9, 0.9); // Bright Cyan
+            vec3 waterBlue = vec3(0.0, 0.6, 1.0); 
+            vec3 waterCyan = vec3(0.0, 0.9, 0.9); 
             
-            // Background gets darker blue, Droplets get bright cyan
             vec3 bgColor = waterBlue; 
             vec3 dropColor = mix(waterCyan, vec3(1.0), highlights);
             
-            // Mix colors based on which layer is dominant
-            // If dropsAlpha is high, use dropColor, else use bgColor
             auraColor = mix(bgColor, dropColor, smoothstep(0.0, 1.0, dropsAlpha));
         }
 
