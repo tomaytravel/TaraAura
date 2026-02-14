@@ -34,7 +34,7 @@ const vertexShader = `
     }
 `;
 
-// --- Fragment Shader (Clean Version) ---
+// --- Fragment Shader (Refined Fire & Detail Drop) ---
 const fragmentShader = `
     precision mediump float;
     uniform sampler2D tDiffuse;
@@ -59,51 +59,29 @@ const fragmentShader = `
 
     varying vec2 vUv;
 
-    // --- Noise Functions ---
-    vec3 permute(vec3 x) { return mod(((x*34.0)+1.0)*x, 289.0); }
-    float snoise(vec2 v){
-        const vec4 C = vec4(0.211324865405187, 0.366025403784439, -0.577350269189626, 0.024390243902439);
-        vec2 i  = floor(v + dot(v, C.yy) );
-        vec2 x0 = v -   i + dot(i, C.xx);
-        vec2 i1;
-        i1 = (x0.x > x0.y) ? vec2(1.0, 0.0) : vec2(0.0, 1.0);
-        vec4 x12 = x0.xyxy + C.xxzz;
-        x12.xy -= i1;
-        i = mod(i, 289.0);
-        vec3 p = permute( permute( i.y + vec3(0.0, i1.y, 1.0 )) + i.x + vec3(0.0, i1.x, 1.0 ));
-        vec3 m = max(0.5 - vec3(dot(x0,x0), dot(x12.xy,x12.xy), dot(x12.zw,x12.zw)), 0.0);
-        m = m*m ;
-        m = m*m ;
-        vec3 x = 2.0 * fract(p * C.www) - 1.0;
-        vec3 h = abs(x) - 0.5;
-        vec3 ox = floor(x + 0.5);
-        vec3 a0 = x - ox;
-        m *= 1.79284291400159 - 0.85373472095314 * ( a0*a0 + h*h );
-        vec3 g;
-        g.x  = a0.x  * x0.x  + h.x  * x0.y;
-        g.yz = a0.yz * x12.xz + h.yz * x12.yw;
-        return 130.0 * dot(m, g);
+    // --- User's Noise Functions (High Detail) ---
+    float hash(vec2 p) {
+        return fract(sin(dot(p, vec2(12.123, 78.233))) * 43758.5453);
     }
 
-    // FBM (Fractal Brownian Motion)
-    float fbm(vec2 st) {
-        float value = 0.0;
-        float amplitude = 0.5;
-        for (int i = 0; i < 4; i++) {
-            value += amplitude * snoise(st);
-            st *= 2.0;
-            amplitude *= 0.5;
+    float noise(vec2 p) {
+        vec2 i = floor(p);
+        vec2 f = fract(p);
+        f = f*f*(3.0-2.0*f);
+        return mix(mix(hash(i + vec2(0.0,0.0)), hash(i + vec2(1.0,0.0)), f.x),
+                   mix(hash(i + vec2(0.0,1.0)), hash(i + vec2(1.0,1.0)), f.x), f.y);
+    }
+
+    // Smooth Layered Noise (FBM)
+    float fbm(vec2 p) {
+        float v = 0.0;
+        float a = 0.5;
+        for (int i = 0; i < 5; i++) {
+            v += a * noise(p);
+            p *= 2.0;
+            a *= 0.5;
         }
-        return value;
-    }
-
-    // Domain Warping for Fire
-    float firePattern(vec2 p, float time) {
-        vec2 q = vec2(fbm(p + vec2(0.0, time * 0.4)),
-                     fbm(p + vec2(5.2, 1.3)));
-        vec2 r = vec2(fbm(p + 4.0 * q + vec2(1.7, 9.2) + 0.5 * time),
-                     fbm(p + 4.0 * q + vec2(8.3, 2.8) - 0.2 * time));
-        return fbm(p + 4.0 * r);
+        return v;
     }
 
     vec3 rgb2hsv(vec3 c) {
@@ -120,11 +98,6 @@ const fragmentShader = `
         vec3 p = abs(fract(c.xxx + K.xyz) * 6.0 - K.www);
         return c.z * mix(K.xxx, clamp(p - K.xxx, 0.0, 1.0), c.y);
     }
-    
-    // Random function
-    float random (vec2 st) {
-        return fract(sin(dot(st.xy, vec2(12.9898,78.233))) * 43758.5453123);
-    }
 
     void main() {
         vec2 uv = vUv;
@@ -138,99 +111,136 @@ const fragmentShader = `
         float auraAlpha = 0.0;
         vec3 auraColor = vec3(1.0, 0.8, 0.4); 
 
-        // --- TYPE 1: Thangka Style Flame ---
+        // Center calculation for Radial Mapping
+        vec2 center = vec2(0.5);
+        vec2 toCenter = uv - center;
+        float radius = length(toCenter);
+        float angle = atan(toCenter.y, toCenter.x);
+        // Normalize angle to 0-1 range for noise lookup
+        float normAngle = (angle / 6.28318) + 0.5;
+
+        // ==========================================
+        // TYPE 1: Detailed Flame (Applied User Logic)
+        // ==========================================
         if (uType == 1) {
-            float maxDist = uAuraSize * growthPhase * 2.0;
-            float bodyMask = 0.0;
-            const int SAMPLES = 16;
-            for(int i=0; i<SAMPLES; i++) {
-                float angle = float(i) * 6.28318 / float(SAMPLES);
-                vec2 offset = vec2(cos(angle), sin(angle)) * maxDist * 0.5;
-                bodyMask = max(bodyMask, texture2D(tDiffuse, uv + offset).a);
-            }
-            float flameBase = smoothstep(0.1, 0.8, bodyMask);
+            // 1. Map Polar to Cartesian for the Fire Function
+            // X axis becomes Angle (circumference), Y axis becomes Radius (outward)
+            vec2 polarUV = vec2(normAngle * 4.0, radius); // Multiply angle to repeat texture around circle
             
-            vec2 center = vec2(0.5);
-            vec2 toCenter = uv - center;
-            float angle = atan(toCenter.y, toCenter.x);
-            float radius = length(toCenter);
+            // 2. Domain Warping (From User Code)
+            vec2 q = polarUV;
+            q.x += fbm(polarUV * 3.0 + activeTime * 0.5) * 0.2 - 0.1;
+            // q.y moves outward based on time
+            q.y -= activeTime * uSwim;
 
-            vec2 fireUV = uv * 3.0; 
-            float pattern = firePattern(fireUV, activeTime * uSwim);
-            float flow = snoise(vec2(radius * 5.0 - activeTime * 2.0, angle * 5.0));
-            float fireIntensity = pattern + flow * 0.5;
+            // 3. Generate Strands (From User Code)
+            // vec2(6.0, 1.5) controls strand density. We scale it by sliders.
+            float n = fbm(q * vec2(6.0 / uFlameHeight, 1.5));
+
+            // 4. Shape the Mask
+            // Instead of linear uv.y, we use radius to define start/end of flame
+            // Body Area (Inner)
+            float innerEdge = 0.1 + (uAuraSize * 0.2);
+            float outerEdge = innerEdge + (uAuraSize * growthPhase * 2.5);
             
-            float flameShape = flameBase - alpha;
-            flameShape *= smoothstep(0.0, 1.0, fireIntensity); 
-            float spikes = sin(angle * 20.0 + pattern * 10.0);
-            flameShape += spikes * 0.1 * uFlameHeight;
+            // Smoothstep creates the radial fade out
+            float mask = smoothstep(innerEdge, outerEdge, radius);
+            // Invert mask so it's bright inside, dark outside
+            mask = 1.0 - mask;
+            // Hard cut at body
+            mask *= smoothstep(0.0, 0.1, radius - 0.1);
 
-            auraAlpha = smoothstep(0.2, 0.6, flameShape) * uStrength;
-
-            float heat = fireIntensity + (1.0 - radius * 2.0);
+            // 5. Combine Noise and Mask
+            float fire = n * mask * 2.0 * uStrength;
             
-            vec3 colDarkRed = vec3(0.5, 0.0, 0.0);
-            vec3 colRed = vec3(1.0, 0.2, 0.0);
-            vec3 colOrange = vec3(1.0, 0.6, 0.0);
-            vec3 colYellow = vec3(1.0, 1.0, 0.8);
-
-            vec3 fireColor = mix(colDarkRed, colRed, smoothstep(0.2, 0.5, heat));
-            fireColor = mix(fireColor, colOrange, smoothstep(0.5, 0.7, heat));
-            fireColor = mix(fireColor, colYellow, smoothstep(0.7, 1.0, heat));
+            // Sharpen the strands
+            fire = smoothstep(0.2, 0.9, fire);
             
+            // 6. Color Mapping (From User Code)
+            vec3 colDark = vec3(0.5, 0.0, 0.0); // Dark Red
+            vec3 colRed = vec3(1.0, 0.2, 0.0);  // Red
+            vec3 colOrange = vec3(1.0, 0.7, 0.1); // Orange
+            vec3 colYellow = vec3(1.0, 1.0, 0.8); // Yellow
+
+            vec3 fireColor = mix(colDark, colRed, fire);
+            fireColor = mix(fireColor, colOrange, smoothstep(0.5, 0.8, fire));
+            fireColor = mix(fireColor, colYellow, smoothstep(0.8, 1.2, fire));
+
+            // Apply Temp Slider
             vec3 hsvFire = rgb2hsv(fireColor);
             hsvFire.x += (uFlameTemp - 0.5) * 0.5; 
             auraColor = hsv2rgb(hsvFire);
+
+            // Set final alpha
+            auraAlpha = fire;
+            // Cut out body
+            auraAlpha *= (1.0 - alpha);
         }
 
-        // --- TYPE 0 & 3: Basic & Fade ---
+        // ==========================================
+        // TYPE 0 & 3: Basic & Fade
+        // ==========================================
         else if (uType == 0 || uType == 3) {
             float maxDist = uAuraSize * growthPhase;
             const int SAMPLES = 12;
-            float noiseVal = snoise(uv * 3.0 + activeTime * uSwim) * 0.02;
+            float noiseVal = fbm(uv * 3.0 + activeTime * uSwim) * 0.1; // Use fbm here too
             float accumulatedAlpha = 0.0;
             for(int i=0; i<SAMPLES; i++) {
-                float angle = float(i) * 6.28318 / float(SAMPLES);
-                vec2 offset = vec2(cos(angle), sin(angle)) * maxDist;
+                float a = float(i) * 6.28318 / float(SAMPLES);
+                vec2 offset = vec2(cos(a), sin(a)) * maxDist;
                 offset *= 1.0 + sin(activeTime * 2.0 * uBreath) * 0.15;
-                offset += vec2(noiseVal);
+                offset += vec2(noiseVal * 0.1); 
                 accumulatedAlpha += texture2D(tDiffuse, uv + offset).a;
             }
             auraAlpha = accumulatedAlpha / float(SAMPLES);
             auraAlpha = clamp(auraAlpha - alpha * 1.5, 0.0, 1.0);
             
             if (uType == 3) {
-                float fadeNoise = snoise(uv * 10.0 + vec2(0.0, -activeTime * 0.5));
+                float fadeNoise = fbm(uv * 10.0 + vec2(0.0, -activeTime * 0.5));
                 float cycle = (sin(activeTime) + 1.0) * 0.5; 
                 float smokeMask = smoothstep(0.2 + cycle * 0.5, 0.8, auraAlpha + fadeNoise * 0.3);
                 auraAlpha *= smokeMask;
             }
         }
         
-        // --- TYPE 2: Droplet ---
+        // ==========================================
+        // TYPE 2: Droplet (Fine Mist / Particles)
+        // ==========================================
         else if (uType == 2) { 
-            vec2 center = vec2(0.5);
-            vec2 toCenter = uv - center;
-            float radius = length(toCenter);
-            float angle = atan(toCenter.y, toCenter.x);
+            // 1. Radial movement
             float radialMove = radius * (10.0 / uDropSize) - activeTime * uDropSpeed * 3.0;
-            float cellIndex = floor(radialMove);
+            
+            // 2. Use FBM to create "finely split" noise texture
+            // Map polar coordinates to noise space for detailed texturing
+            vec2 noiseUV = vec2(normAngle * 10.0, radialMove * 0.5);
+            float fineDetail = fbm(noiseUV);
+            
+            // 3. Create main droplet shape (Cellular)
             float cellLocal = fract(radialMove);
-            float randomVal = random(vec2(floor(angle * 5.0), cellIndex));
             float dropShape = smoothstep(0.4, 0.5, cellLocal) * smoothstep(0.6, 0.5, cellLocal);
-            float exist = step(0.7, randomVal); 
+            
+            // 4. Combine: Multiply drop shape by fine FBM noise
+            // This breaks the big drop into "mist" or "shards"
+            float mist = dropShape * fineDetail * 2.0;
+            
+            // 5. Direction Mask
             float dirMask = 1.0;
             if (length(uDropDir) > 0.1) {
                 float dotDir = dot(normalize(toCenter), normalize(uDropDir));
                 dirMask = smoothstep(0.0, 0.5, dotDir);
             }
-            float safeZone = smoothstep(0.1, 0.3, radius); 
-            auraAlpha = dropShape * exist * dirMask * safeZone * uStrength;
+            
+            // 6. Safe Zone (Don't draw on body)
+            float safeZone = smoothstep(0.15, 0.3, radius); 
+
+            auraAlpha = mist * dirMask * safeZone * uStrength;
+            
+            // Cut body
             auraAlpha *= (1.0 - alpha);
-            auraColor = vec3(0.4, 0.8, 1.0);
+            auraColor = vec3(0.4, 0.8, 1.0); // Cyan mist
         }
 
-        // --- Common: Green Convergence ---
+        // Common: Green Convergence
         vec3 hsv = rgb2hsv(auraColor);
         float targetHue = 0.33; 
         hsv.x = mix(hsv.x, targetHue, uConv * growthPhase * 0.8);
