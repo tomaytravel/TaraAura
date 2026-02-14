@@ -34,7 +34,7 @@ const vertexShader = `
     }
 `;
 
-// --- Fragment Shader (Watery Border & Random Drops) ---
+// --- Fragment Shader (Hollow, Slow, Wobbling Droplets) ---
 const fragmentShader = `
     precision mediump float;
     uniform sampler2D tDiffuse;
@@ -169,95 +169,96 @@ const fragmentShader = `
         }
 
         // ==========================================
-        // TYPE 4: Real Droplet + Liquid Aura Border
+        // TYPE 4: Hollow Droplet + Liquid Aura Border
         // ==========================================
         else if (uType == 4) {
-            // [LAYER 1] Water Caustics Background (Undulating Border)
-            
-            // 1. Calculate Distortion for the Border
-            // Unlike Flame (jagged), Water needs smooth, low-freq warping.
+            // [LAYER 1] Background (Same as before)
             vec2 warpUV = uv;
-            
-            // Create a smooth wave field
-            // uSwim slider controls the speed of the undulation
             float wave = fbm(uv * 3.0 + activeTime * uSwim * 0.5); 
-            
-            // Distort the lookup coordinate slightly
             warpUV += (vec2(wave) - 0.5) * 0.05; 
 
-            // 2. Sample Texture with Warped UV
-            // This makes the aura border wobble like liquid
             float bgDist = uAuraSize * 2.5; 
             float bgMask = 0.0;
-            
             const int SAMPLES = 12;
             for(int i=0; i<SAMPLES; i++) {
                 float a = float(i) * 6.28318 / float(SAMPLES);
                 vec2 offset = vec2(cos(a), sin(a)) * bgDist;
-                // Use warped UV here!
                 bgMask = max(bgMask, texture2D(tDiffuse, warpUV + offset).a);
             }
             bgMask = smoothstep(0.2, 0.6, bgMask); 
 
-            // 3. Draw Net Pattern inside the warped mask
             vec2 waterUV = vec2(normAngle * 8.0, radius * 2.0 - activeTime * 0.2);
             float netPattern = caustics(waterUV, activeTime * 0.5);
-            
             float bgAlpha = bgMask * netPattern * 0.4 * uStrength;
 
-            // [LAYER 2] Discrete Droplets (Random Size & Slow)
+            // [LAYER 2] Hollow, Slow, Wobbling Droplets
             float dropsAlpha = 0.0;
-            float highlights = 0.0; 
             const float NUM_DROPS = 15.0; 
             
             for(float i = 0.0; i < NUM_DROPS; i++) {
                 float seed = i * 17.54;
                 
-                // [FIX 2] Slow Speed (Float gently)
-                // Reduced multiplier from 1.0 to 0.3
+                // [FIX 2] Dramatically slower speed (0.08 mult)
                 float speedVar = 0.5 + hash(vec2(seed, 1.0)) * 0.5;
-                float t = activeTime * uDropSpeed * 0.3 * speedVar + seed; 
+                float t = activeTime * uDropSpeed * 0.08 * speedVar + seed; 
                 
                 float cycle = fract(t); 
                 float cycleIdx = floor(t);
                 
-                // Position
                 float rndAngle = hash(vec2(seed, cycleIdx)) * 6.28318;
                 float travelDist = cycle * 2.0; 
                 vec2 dropPos = center + vec2(cos(rndAngle), sin(rndAngle)) * travelDist;
                 
-                // Distance field
-                float d = distance(uv, dropPos);
+                // [FIX 3] Dynamic Shape Distortion (Wobble) based on Swim speed
+                vec2 p = uv - dropPos; // Vector from center of drop
                 
-                // [FIX 1] Random Size (1~3 relative scale)
-                // hash gives 0.0~1.0 -> map to 0.3~1.0 range
+                // Wavelike breathing phase
+                float wavePhase = activeTime * uSwim * 2.0 + cycleIdx * 1.1;
+                
+                // Squash and Stretch (changes width/height ratio rhythmically)
+                float squashFactor = 1.0 + 0.25 * sin(wavePhase);
+                // Apply opposite scaling to x and y to maintain roughly same area
+                p.x *= sqrt(squashFactor);
+                p.y /= sqrt(squashFactor);
+
+                // Overall size fluctuation (breathing)
+                float sizeBreath = 1.0 + 0.15 * cos(wavePhase * 0.7);
+                
+                // Modified distance based on distorted vector
+                float d = length(p) / sizeBreath;
+
+
+                // [FIX 1] Hollow Ring Shape & Reduced Size
                 float rndScale = 0.3 + 0.7 * hash(vec2(seed, 9.9));
+                // Reduced base size multiplier slightly (0.2 -> 0.15)
+                float outerRadius = uDropSize * 0.15 * rndScale * (1.0 - cycle * 0.6);
                 
-                float baseSize = uDropSize * 0.2 * rndScale; 
-                float currentSize = baseSize * (1.0 - cycle * 0.8); 
+                // Ring thickness relative to radius
+                float ringThickness = outerRadius * 0.25; 
+                float innerRadius = outerRadius - ringThickness;
+
+                float edge = 0.005; // Sharpness
+
+                // Create Ring: Outer Circle - Inner Circle
+                float outerCircle = smoothstep(outerRadius, outerRadius - edge, d);
+                float innerHole = smoothstep(innerRadius - edge, innerRadius, d);
+                float ring = outerCircle * innerHole;
+
+                // Fade out
+                ring *= smoothstep(1.0, 0.85, cycle);
                 
-                float circle = smoothstep(currentSize, currentSize - 0.005, d);
-                circle *= smoothstep(1.0, 0.9, cycle);
-                
-                vec2 highlightPos = dropPos - vec2(currentSize * 0.3);
-                float hd = distance(uv, highlightPos);
-                float shine = smoothstep(currentSize * 0.25, currentSize * 0.15, hd);
-                
-                dropsAlpha = max(dropsAlpha, circle);
-                highlights = max(highlights, shine * circle); 
+                dropsAlpha = max(dropsAlpha, ring);
             }
 
             // [COMBINE]
             auraAlpha = max(bgAlpha, dropsAlpha * uStrength);
             
-            // Color Logic
+            // Color Logic (Simpler cyan for rings)
             vec3 waterBlue = vec3(0.0, 0.6, 1.0); 
-            vec3 waterCyan = vec3(0.0, 0.9, 0.9); 
+            vec3 brightCyan = vec3(0.2, 1.0, 1.0); 
             
-            vec3 bgColor = waterBlue; 
-            vec3 dropColor = mix(waterCyan, vec3(1.0), highlights);
-            
-            auraColor = mix(bgColor, dropColor, smoothstep(0.0, 1.0, dropsAlpha));
+            // Rings are bright cyan, background is deeper blue
+            auraColor = mix(waterBlue, brightCyan, smoothstep(0.0, 0.5, dropsAlpha));
         }
 
         // ==========================================
