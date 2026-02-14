@@ -34,7 +34,7 @@ const vertexShader = `
     }
 `;
 
-// --- Fragment Shader ---
+// --- Fragment Shader (Water Caustics + Droplets) ---
 const fragmentShader = `
     precision mediump float;
     uniform sampler2D tDiffuse;
@@ -81,6 +81,25 @@ const fragmentShader = `
             a *= 0.5;
         }
         return v;
+    }
+
+    // [New] Domain Warped Noise for Caustics (Net pattern)
+    float caustics(vec2 p, float t) {
+        // Warp coordinates
+        vec2 q = p;
+        q.x += fbm(p + t * 0.1);
+        q.y += fbm(p - t * 0.1);
+        
+        // Use absolute value of noise to create "lines" or "ridges"
+        // standard noise is -1 to 1 or 0 to 1. 
+        // abs(noise - 0.5) creates zero-valleys in the middle -> lines.
+        float n = fbm(q * 3.0);
+        
+        // Invert and sharpen to get a "Net" look
+        // Values near 0.5 become 0 (dark voids), edges become 1 (bright lines)
+        float net = 1.0 - abs(n * 2.0 - 1.0);
+        net = pow(net, 3.0); // Sharpen the lines
+        return net;
     }
 
     vec3 rgb2hsv(vec3 c) {
@@ -158,74 +177,81 @@ const fragmentShader = `
         }
 
         // ==========================================
-        // TYPE 4: Real Droplet (New Logic)
+        // TYPE 4: Real Droplet + Caustics Background
         // ==========================================
         else if (uType == 4) {
-            // 1. Basic Aura Background (Optional, faint glow)
-            float maxDist = uAuraSize; 
+            // [LAYER 1] Water Caustics (Net Pattern) Background
+            // Create a polar mapped net pattern that flows outward
+            vec2 waterUV = vec2(normAngle * 8.0, radius * 2.0 - activeTime * 0.2);
+            float netPattern = caustics(waterUV, activeTime * 0.5);
+            
+            // Mask the net so it looks like an aura (Fades out at distance)
+            float bgDist = uAuraSize * 2.5; // Background radius
             float bgMask = 0.0;
+            // Simple expansion for background
             for(int i=0; i<8; i++) {
                 float a = float(i) * 6.28318 / 8.0;
-                vec2 offset = vec2(cos(a), sin(a)) * maxDist;
+                vec2 offset = vec2(cos(a), sin(a)) * bgDist;
                 bgMask = max(bgMask, texture2D(tDiffuse, uv + offset).a);
             }
-            // Faint background aura to show the boundary
-            auraAlpha = smoothstep(0.1, 0.8, bgMask) * 0.2; 
+            bgMask = smoothstep(0.2, 0.6, bgMask); // Soft edge
+            
+            // Background is semi-transparent net
+            // 'uStrength' modulates opacity. We multiply by 0.4 to keep it subtle.
+            float bgAlpha = bgMask * netPattern * 0.4 * uStrength;
 
-            // 2. Generate Discrete Droplets
+
+            // [LAYER 2] Discrete Droplets (Foreground)
             float dropsAlpha = 0.0;
-            const float NUM_DROPS = 10.0; // Number of active drops in loop
+            float highlights = 0.0; 
+            const float NUM_DROPS = 15.0; 
             
             for(float i = 0.0; i < NUM_DROPS; i++) {
-                // Random properties for each drop
-                float seed = i * 12.345;
-                
-                // Time offset creates continuous stream
-                float t = activeTime * uDropSpeed + seed; 
-                
-                // Cycle: 0 -> 1 (Start at center, go out)
+                float seed = i * 17.54;
+                float speedVar = 0.8 + hash(vec2(seed, 1.0)) * 0.4;
+                float t = activeTime * uDropSpeed * speedVar + seed; 
                 float cycle = fract(t); 
-                
-                // Random Angle per cycle
                 float cycleIdx = floor(t);
                 float rndAngle = hash(vec2(seed, cycleIdx)) * 6.28318;
-                
-                // Current position: Move outward
-                // Max distance to travel (e.g., 2.0 screen units)
-                float travelDist = cycle * 1.5; 
+                float travelDist = cycle * 2.0; 
                 vec2 dropPos = center + vec2(cos(rndAngle), sin(rndAngle)) * travelDist;
-                
-                // Distance field for circle
                 float d = distance(uv, dropPos);
+                float baseSize = uDropSize * 0.2; 
+                float currentSize = baseSize * (1.0 - cycle * 0.8); 
                 
-                // Size: 1/5 to 1/10 (approx 0.1 to 0.2)
-                // Shrink as it goes out: cycle 0 -> size 1, cycle 1 -> size 0
-                float baseSize = uDropSize * 0.15; // Base scale
-                float currentSize = baseSize * (1.2 - cycle); // Shrink over time
+                float circle = smoothstep(currentSize, currentSize - 0.005, d);
+                circle *= smoothstep(1.0, 0.9, cycle);
                 
-                // Draw Circle (Sharp edge)
-                float circle = smoothstep(currentSize, currentSize - 0.01, d);
+                vec2 highlightPos = dropPos - vec2(currentSize * 0.3);
+                float hd = distance(uv, highlightPos);
+                float shine = smoothstep(currentSize * 0.25, currentSize * 0.15, hd);
                 
-                // Fade out at end of life
-                circle *= smoothstep(1.0, 0.8, cycle);
-                
-                // Accumulate (Max blend)
                 dropsAlpha = max(dropsAlpha, circle);
+                highlights = max(highlights, shine * circle); 
             }
 
-            // 3. Combine: Add droplets to the faint aura
-            // 'max' ensures droplets persist even outside the aura border
-            auraAlpha = max(auraAlpha, dropsAlpha * uStrength);
+            // [COMBINE LAYERS]
+            // We use max() to blend them. 
+            // The droplets are solid (high alpha), background is ghosty (low alpha).
+            auraAlpha = max(bgAlpha, dropsAlpha * uStrength);
             
-            // Color: Blue/Cyan
-            auraColor = vec3(0.3, 0.7, 1.0);
+            // Color Logic
+            vec3 waterBlue = vec3(0.0, 0.6, 1.0); // Deep Blue
+            vec3 waterCyan = vec3(0.0, 0.9, 0.9); // Bright Cyan
+            
+            // Background gets darker blue, Droplets get bright cyan
+            vec3 bgColor = waterBlue; 
+            vec3 dropColor = mix(waterCyan, vec3(1.0), highlights);
+            
+            // Mix colors based on which layer is dominant
+            // If dropsAlpha is high, use dropColor, else use bgColor
+            auraColor = mix(bgColor, dropColor, smoothstep(0.0, 1.0, dropsAlpha));
         }
 
         // ==========================================
-        // TYPE 2: Ripple (Old Droplet Logic)
+        // TYPE 2: Ripple (Old "Droplet")
         // ==========================================
         else if (uType == 2) { 
-            // Previous 'Mist/Ripple' logic
             float maxDist = uAuraSize * 2.0; 
             float borderMask = 0.0;
             for(int i=0; i<8; i++) {
@@ -249,7 +275,6 @@ const fragmentShader = `
             }
 
             auraAlpha = mist * dirMask * uStrength;
-            auraAlpha *= (1.0 - alpha); 
             auraColor = vec3(0.4, 0.8, 1.0);
         }
 
@@ -279,12 +304,15 @@ const fragmentShader = `
         }
 
         // ==========================================
-        // Final Composition (Halo Effect)
+        // Final Composition
         // ==========================================
-        vec3 hsv = rgb2hsv(auraColor);
-        float targetHue = 0.33; 
-        hsv.x = mix(hsv.x, targetHue, uConv * growthPhase * 0.8);
-        auraColor = hsv2rgb(hsv);
+        
+        if (uType != 4) {
+            vec3 hsv = rgb2hsv(auraColor);
+            float targetHue = 0.33; 
+            hsv.x = mix(hsv.x, targetHue, uConv * growthPhase * 0.8);
+            auraColor = hsv2rgb(hsv);
+        }
 
         float brightness = uCore + (lockPhase * 0.5);
         vec3 bodyColor = texColor.rgb * brightness;
@@ -292,7 +320,7 @@ const fragmentShader = `
         vec3 finalAura = auraColor * auraAlpha;
         vec3 finalColor = finalAura;
         
-        // Body over Aura (Backlight)
+        // Halo Blending (Body on top)
         finalColor = mix(finalColor, bodyColor, alpha);
 
         float finalAlpha = max(auraAlpha, alpha);
