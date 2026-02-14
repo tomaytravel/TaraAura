@@ -10,8 +10,8 @@ let currentType = 0; // 0:Basic, 1:Flame, 2:Drop, 3:Fade
 
 // --- Parameter Defaults ---
 const params = {
-    auraSize: 0.15,
-    auraStrength: 0.8,
+    auraSize: 0.20, // 사이즈 약간 키움 (후광 효과 극대화)
+    auraStrength: 1.5, // 강도 증가
     swimSpeed: 0.5,
     breathSpeed: 0.3,
     convergence: 0.5, 
@@ -34,7 +34,7 @@ const vertexShader = `
     }
 `;
 
-// --- Fragment Shader (Refined Fire & Detail Drop) ---
+// --- Fragment Shader (Shape Distortion & Halo Layering) ---
 const fragmentShader = `
     precision mediump float;
     uniform sampler2D tDiffuse;
@@ -59,7 +59,7 @@ const fragmentShader = `
 
     varying vec2 vUv;
 
-    // --- User's Noise Functions (High Detail) ---
+    // --- Noise Functions ---
     float hash(vec2 p) {
         return fract(sin(dot(p, vec2(12.123, 78.233))) * 43758.5453);
     }
@@ -72,7 +72,7 @@ const fragmentShader = `
                    mix(hash(i + vec2(0.0,1.0)), hash(i + vec2(1.0,1.0)), f.x), f.y);
     }
 
-    // Smooth Layered Noise (FBM)
+    // FBM: Fine details
     float fbm(vec2 p) {
         float v = 0.0;
         float a = 0.5;
@@ -111,89 +111,125 @@ const fragmentShader = `
         float auraAlpha = 0.0;
         vec3 auraColor = vec3(1.0, 0.8, 0.4); 
 
-        // Center calculation for Radial Mapping
+        // Center calc
         vec2 center = vec2(0.5);
         vec2 toCenter = uv - center;
         float radius = length(toCenter);
         float angle = atan(toCenter.y, toCenter.x);
-        // Normalize angle to 0-1 range for noise lookup
         float normAngle = (angle / 6.28318) + 0.5;
 
         // ==========================================
-        // TYPE 1: Detailed Flame (Applied User Logic)
+        // TYPE 1: Thangka Flame (Shape Distortion)
         // ==========================================
         if (uType == 1) {
-            // 1. Map Polar to Cartesian for the Fire Function
-            // X axis becomes Angle (circumference), Y axis becomes Radius (outward)
-            vec2 polarUV = vec2(normAngle * 4.0, radius); // Multiply angle to repeat texture around circle
+            // [Feature 1] Shape Sculpting via Dynamic Sampling
+            // Instead of a fixed circle, we modulate the sampling distance with Noise.
+            // This creates a jagged, irregular expansion (flames sticking out).
             
-            // 2. Domain Warping (From User Code)
+            float baseDist = uAuraSize * growthPhase * 2.5; 
+            float borderMask = 0.0;
+            
+            // Polar FBM for distortion
+            vec2 polarUV = vec2(normAngle * 6.0, radius);
             vec2 q = polarUV;
-            q.x += fbm(polarUV * 3.0 + activeTime * 0.5) * 0.2 - 0.1;
-            // q.y moves outward based on time
-            q.y -= activeTime * uSwim;
-
-            // 3. Generate Strands (From User Code)
-            // vec2(6.0, 1.5) controls strand density. We scale it by sliders.
-            float n = fbm(q * vec2(6.0 / uFlameHeight, 1.5));
-
-            // 4. Shape the Mask
-            // Instead of linear uv.y, we use radius to define start/end of flame
-            // Body Area (Inner)
-            float innerEdge = 0.1 + (uAuraSize * 0.2);
-            float outerEdge = innerEdge + (uAuraSize * growthPhase * 2.5);
+            q.x += fbm(polarUV * 3.0 + activeTime * 0.5) * 0.2;
+            q.y -= activeTime * uSwim; 
             
-            // Smoothstep creates the radial fade out
-            float mask = smoothstep(innerEdge, outerEdge, radius);
-            // Invert mask so it's bright inside, dark outside
-            mask = 1.0 - mask;
-            // Hard cut at body
-            mask *= smoothstep(0.0, 0.1, radius - 0.1);
-
-            // 5. Combine Noise and Mask
-            float fire = n * mask * 2.0 * uStrength;
+            // Use this noise to distort the border SHAPE
+            float shapeNoise = fbm(q * vec2(5.0, 1.0)); // Lower frequency for shape
             
-            // Sharpen the strands
-            fire = smoothstep(0.2, 0.9, fire);
+            // Sampling loop
+            const int SAMPLES = 16;
+            for(int i=0; i<SAMPLES; i++) {
+                float a = float(i) * 6.28318 / float(SAMPLES);
+                
+                // Dynamic Reach: Fire reaches further where noise is high
+                // shapeNoise varies by angle, creating tongues of fire
+                float reach = baseDist * (0.5 + 1.5 * shapeNoise); 
+                
+                vec2 offset = vec2(cos(a), sin(a)) * reach * 0.5; 
+                borderMask = max(borderMask, texture2D(tDiffuse, uv + offset).a);
+            }
+            borderMask = smoothstep(0.1, 0.6, borderMask);
+
+            // [Feature 2] Internal Detail Texture
+            // High frequency FBM for fine strands inside the flame
+            float detailNoise = fbm(q * vec2(10.0, 2.0)); 
             
-            // 6. Color Mapping (From User Code)
-            vec3 colDark = vec3(0.5, 0.0, 0.0); // Dark Red
-            vec3 colRed = vec3(1.0, 0.2, 0.0);  // Red
-            vec3 colOrange = vec3(1.0, 0.7, 0.1); // Orange
-            vec3 colYellow = vec3(1.0, 1.0, 0.8); // Yellow
+            // Combine Shape & Detail
+            float flameVis = borderMask * detailNoise;
+            flameVis = smoothstep(0.1, 0.9, flameVis); // Increase contrast
+            
+            // Apply strength
+            auraAlpha = flameVis * uStrength;
 
-            vec3 fireColor = mix(colDark, colRed, fire);
-            fireColor = mix(fireColor, colOrange, smoothstep(0.5, 0.8, fire));
-            fireColor = mix(fireColor, colYellow, smoothstep(0.8, 1.2, fire));
+            // [Feature 3] Halo Layering (No hole punching)
+            // We do NOT subtract alpha here. We will mix later.
 
-            // Apply Temp Slider
-            vec3 hsvFire = rgb2hsv(fireColor);
-            hsvFire.x += (uFlameTemp - 0.5) * 0.5; 
-            auraColor = hsv2rgb(hsvFire);
+            // Color Gradient
+            vec3 c1 = vec3(0.5, 0.0, 0.0); // Deep Red
+            vec3 c2 = vec3(1.0, 0.3, 0.0); // Orange
+            vec3 c3 = vec3(1.0, 0.9, 0.1); // Yellow
+            
+            vec3 fireCol = mix(c1, c2, smoothstep(0.0, 0.5, detailNoise));
+            fireCol = mix(fireCol, c3, smoothstep(0.5, 1.0, detailNoise));
+            
+            vec3 hsvF = rgb2hsv(fireCol);
+            hsvF.x += (uFlameTemp - 0.5) * 0.4;
+            auraColor = hsv2rgb(hsvF);
+        }
 
-            // Set final alpha
-            auraAlpha = fire;
-            // Cut out body
-            auraAlpha *= (1.0 - alpha);
+        // ==========================================
+        // TYPE 2: Droplet (Scattered Particles)
+        // ==========================================
+        else if (uType == 2) { 
+            // Expand border
+            float maxDist = uAuraSize * 2.0; 
+            float borderMask = 0.0;
+            for(int i=0; i<12; i++) {
+                float a = float(i) * 6.28318 / 12.0;
+                vec2 offset = vec2(cos(a), sin(a)) * maxDist * 0.8;
+                borderMask = max(borderMask, texture2D(tDiffuse, uv + offset).a);
+            }
+            borderMask = smoothstep(0.1, 0.5, borderMask);
+
+            // Mist Noise
+            float radialMove = radius * (10.0 / uDropSize) - activeTime * uDropSpeed * 3.0;
+            vec2 noiseUV = vec2(normAngle * 10.0, radialMove * 0.5);
+            float fineDetail = fbm(noiseUV);
+            
+            float cellLocal = fract(radialMove);
+            float dropShape = smoothstep(0.4, 0.5, cellLocal) * smoothstep(0.6, 0.5, cellLocal);
+            
+            float mist = borderMask * dropShape * fineDetail * 2.5;
+            
+            float dirMask = 1.0;
+            if (length(uDropDir) > 0.1) {
+                float dotDir = dot(normalize(toCenter), normalize(uDropDir));
+                dirMask = smoothstep(0.0, 0.5, dotDir);
+            }
+
+            auraAlpha = mist * dirMask * uStrength;
+            // No hole punching -> Halo effect
+            auraColor = vec3(0.4, 0.8, 1.0);
         }
 
         // ==========================================
         // TYPE 0 & 3: Basic & Fade
         // ==========================================
-        else if (uType == 0 || uType == 3) {
+        else {
             float maxDist = uAuraSize * growthPhase;
             const int SAMPLES = 12;
-            float noiseVal = fbm(uv * 3.0 + activeTime * uSwim) * 0.1; // Use fbm here too
+            float noiseVal = fbm(uv * 3.0 + activeTime * uSwim) * 0.1;
             float accumulatedAlpha = 0.0;
             for(int i=0; i<SAMPLES; i++) {
                 float a = float(i) * 6.28318 / float(SAMPLES);
                 vec2 offset = vec2(cos(a), sin(a)) * maxDist;
                 offset *= 1.0 + sin(activeTime * 2.0 * uBreath) * 0.15;
-                offset += vec2(noiseVal * 0.1); 
+                offset += vec2(noiseVal * 0.1);
                 accumulatedAlpha += texture2D(tDiffuse, uv + offset).a;
             }
             auraAlpha = accumulatedAlpha / float(SAMPLES);
-            auraAlpha = clamp(auraAlpha - alpha * 1.5, 0.0, 1.0);
             
             if (uType == 3) {
                 float fadeNoise = fbm(uv * 10.0 + vec2(0.0, -activeTime * 0.5));
@@ -202,55 +238,37 @@ const fragmentShader = `
                 auraAlpha *= smokeMask;
             }
         }
+
+        // ==========================================
+        // Final Composition (Halo Effect)
+        // ==========================================
         
-        // ==========================================
-        // TYPE 2: Droplet (Fine Mist / Particles)
-        // ==========================================
-        else if (uType == 2) { 
-            // 1. Radial movement
-            float radialMove = radius * (10.0 / uDropSize) - activeTime * uDropSpeed * 3.0;
-            
-            // 2. Use FBM to create "finely split" noise texture
-            // Map polar coordinates to noise space for detailed texturing
-            vec2 noiseUV = vec2(normAngle * 10.0, radialMove * 0.5);
-            float fineDetail = fbm(noiseUV);
-            
-            // 3. Create main droplet shape (Cellular)
-            float cellLocal = fract(radialMove);
-            float dropShape = smoothstep(0.4, 0.5, cellLocal) * smoothstep(0.6, 0.5, cellLocal);
-            
-            // 4. Combine: Multiply drop shape by fine FBM noise
-            // This breaks the big drop into "mist" or "shards"
-            float mist = dropShape * fineDetail * 2.0;
-            
-            // 5. Direction Mask
-            float dirMask = 1.0;
-            if (length(uDropDir) > 0.1) {
-                float dotDir = dot(normalize(toCenter), normalize(uDropDir));
-                dirMask = smoothstep(0.0, 0.5, dotDir);
-            }
-            
-            // 6. Safe Zone (Don't draw on body)
-            float safeZone = smoothstep(0.15, 0.3, radius); 
-
-            auraAlpha = mist * dirMask * safeZone * uStrength;
-            
-            // Cut body
-            auraAlpha *= (1.0 - alpha);
-            auraColor = vec3(0.4, 0.8, 1.0); // Cyan mist
-        }
-
-        // Common: Green Convergence
+        // Green Convergence (Global)
         vec3 hsv = rgb2hsv(auraColor);
         float targetHue = 0.33; 
         hsv.x = mix(hsv.x, targetHue, uConv * growthPhase * 0.8);
         auraColor = hsv2rgb(hsv);
 
-        vec3 finalAura = auraColor * auraAlpha;
+        // Core Brightness
         float brightness = uCore + (lockPhase * 0.5);
         vec3 bodyColor = texColor.rgb * brightness;
 
-        vec3 finalColor = finalAura + bodyColor * alpha;
+        // [CORE FIX] Halo Layering Logic
+        // Background (Aura) + Foreground (Body)
+        // Result = Body * Alpha + Aura * (1 - Alpha) (Standard Blending)
+        // But since user wants "Halo", we can additively blend or mix.
+        // Let's use mix to simulate body blocking the aura (Backlight).
+        
+        vec3 finalAura = auraColor * auraAlpha;
+        
+        // 1. Draw Aura
+        vec3 finalColor = finalAura;
+        
+        // 2. Draw Body on top (using body alpha)
+        // This ensures the body covers the aura, creating the "behind" look.
+        finalColor = mix(finalColor, bodyColor, alpha);
+
+        // Final Alpha is max of both to keep shape
         float finalAlpha = max(auraAlpha, alpha);
 
         gl_FragColor = vec4(finalColor, finalAlpha);
@@ -454,8 +472,8 @@ function createSlider(parent, label, paramKey, min, max) {
 }
 
 function resetParams() {
-    params.auraSize = 0.15;
-    params.auraStrength = 0.8;
+    params.auraSize = 0.20;
+    params.auraStrength = 1.5;
     params.swimSpeed = 0.5;
     params.breathSpeed = 0.3;
     params.convergence = 0.5;
