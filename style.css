@@ -1,51 +1,145 @@
+/* 전체 레이아웃 */
 body {
-  margin: 0;
-  overflow: hidden;
-  background: #05070a;
-  font-family: sans-serif;
-  color: white;
+    margin: 0;
+    overflow: hidden;
+    background-color: #000;
+    font-family: 'Noto Sans KR', sans-serif;
+    color: white;
 }
-canvas {
-  width: 100vw;
-  height: 100vh;
-  display: block;
+
+#canvas-container {
+    width: 100vw;
+    height: 100vh;
+    display: block;
 }
-#control-panel {
-  position: fixed;
-  top: 10px;
-  left: 10px;
-  z-index: 999;
-  backdrop-filter: blur(6px);
-  background: rgba(0,0,0,0.35);
-  border-radius: 12px;
-  padding: 10px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+
+/* UI 패널 스타일 */
+#ui-panel {
+    position: absolute;
+    top: 20px;
+    right: 20px;
+    width: 320px;
+    background: rgba(20, 20, 30, 0.85); /* 반투명 배경 */
+    backdrop-filter: blur(10px);
+    padding: 20px;
+    border-radius: 10px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    max-height: 90vh;
+    overflow-y: auto;
+    box-shadow: 0 0 20px rgba(0,0,0,0.5);
+    z-index: 10;
 }
-#sliderBox {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
+
+h1 {
+    font-size: 1.2rem;
+    margin-top: 0;
+    text-align: center;
+    color: #4ade80; /* 밝은 녹색 포인트 */
+    border-bottom: 1px solid rgba(255,255,255,0.2);
+    padding-bottom: 10px;
 }
-label {
-  font-size: 12px;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
+
+h3 {
+    font-size: 0.9rem;
+    margin: 10px 0 5px 0;
+    color: #ddd;
 }
-input[type="range"] {
-  flex-grow: 1;
-  margin-left: 6px;
+
+.control-group {
+    margin-bottom: 15px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid rgba(255,255,255,0.1);
+}
+
+/* 파일 업로드 버튼 */
+.file-upload {
+    display: block;
+    background: #333;
+    color: white;
+    text-align: center;
+    padding: 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.9rem;
+    transition: background 0.2s;
+    border: 1px dashed #666;
+}
+.file-upload:hover { background: #444; border-color: #888; }
+input[type="file"] { display: none; }
+
+#drop-zone-text {
+    font-size: 0.75rem;
+    text-align: center;
+    color: #888;
+    margin: 8px 0 0 0;
+}
+
+/* 일반 버튼 그룹 */
+.buttons {
+    display: flex;
+    gap: 8px;
+    justify-content: space-between;
 }
 button {
-  padding: 6px 8px;
-  border-radius: 8px;
-  border: 1px solid rgba(255,255,255,0.2);
-  background: rgba(255,255,255,0.08);
-  color: white;
-  cursor: pointer;
+    flex: 1;
+    background: #2a2a35;
+    color: white;
+    border: 1px solid #555;
+    padding: 8px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.8rem;
+    transition: 0.2s;
 }
-button:hover {
-  background: rgba(255,255,255,0.14);
+button:hover { background: #3a3a45; border-color: #999; }
+button:active { transform: translateY(1px); }
+
+/* 타입 선택 버튼 그리드 */
+.type-buttons {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
 }
+.type-btn.active {
+    background: #4ade80;
+    color: #000;
+    font-weight: bold;
+    border-color: #4ade80;
+    box-shadow: 0 0 8px rgba(74, 222, 128, 0.4);
+}
+
+/* 슬라이더 스타일 */
+.slider-wrapper {
+    margin-bottom: 10px;
+}
+.slider-label {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.8rem;
+    margin-bottom: 4px;
+    color: #ccc;
+}
+input[type=range] {
+    width: 100%;
+    accent-color: #4ade80;
+    height: 4px;
+    background: #444;
+    border-radius: 2px;
+    outline: none;
+    cursor: pointer;
+}
+
+/* 시간 표시 */
+.status-display {
+    text-align: right;
+    font-size: 0.8rem;
+    color: #4ade80;
+    margin-top: 15px;
+    font-family: monospace;
+}
+
+/* 스크롤바 커스텀 */
+#ui-panel::-webkit-scrollbar { width: 6px; }
+#ui-panel::-webkit-scrollbar-track { background: transparent; }
+#ui-panel::-webkit-scrollbar-thumb { background: #555; border-radius: 3px; }
+#ui-panel::-webkit-scrollbar-thumb:hover { background: #777; }
