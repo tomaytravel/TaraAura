@@ -1,56 +1,30 @@
 <!DOCTYPE html>
 <html lang="ko">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Tara Yogini Aura Visualizer</title>
-    <link rel="stylesheet" href="style.css">
+  <meta charset="UTF-8">
+  <title>Green Tara Aura Prototype</title>
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <div id="canvas-container"></div>
+  <div id="control-panel">
+    <input type="file" id="file" accept="image/png" />
+    <button id="reset">초기화</button>
+    <button id="pause">일시정지</button>
+    <button id="restart">재시작</button>
 
-    <div id="ui-panel">
-        <h1>Tara Aura Visualizer</h1>
-        
-        <div class="control-group">
-            <label class="file-upload">
-                이미지 업로드
-                <input type="file" id="file-input" accept="image/png, image/jpeg">
-            </label>
-            <p id="drop-zone-text">또는 이미지를 드래그하세요</p>
-        </div>
-
-        <div class="control-group buttons">
-            <button id="btn-restart">재시작 (Restart)</button>
-            <button id="btn-pause">일시정지/재생</button>
-            <button id="btn-reset">설정 초기화</button>
-        </div>
-
-        <div class="control-group type-select">
-            <h3>아우라 유형</h3>
-            <div class="type-buttons">
-                <button class="type-btn active" data-type="0">기본 (확장)</button>
-                <button class="type-btn" data-type="1">불꽃 (Flame)</button>
-                <button class="type-btn" data-type="2">물방울 (Drop)</button>
-                <button class="type-btn" data-type="3">페이드 (Fade)</button>
-            </div>
-        </div>
-
-        <div id="slider-container">
-            </div>
-
-        <div class="status-display">
-            시간: <span id="time-display">0.0</span>s
-        </div>
+    <!-- 슬라이더 UI는 있으면 되고 없어도 동작함 -->
+    <div id="sliderBox">
+      <label>아우라 세기<input type="range" id="aura" min="0" max="1" step="0.01" value="0.75"/></label>
+      <label>미세움직임<input type="range" id="swim" min="0" max="1" step="0.01" value="0.6"/></label>
+      <label>호흡<input type="range" id="breath" min="0" max="1" step="0.01" value="0.45"/></label>
+      <label>진동수렴<input type="range" id="conv" min="0" max="1" step="0.01" value="0.7"/></label>
+      <label>본체밝기<input type="range" id="core" min="0" max="2" step="0.01" value="1.12"/></label>
     </div>
+  </div>
 
-    <script type="importmap">
-        {
-            "imports": {
-                "three": "https://unpkg.com/three@0.160.0/build/three.module.js"
-            }
-        }
-    </script>
-    <script type="module" src="script.js"></script>
+  <canvas id="c"></canvas>
+
+  <!-- 기본 타라 이미지를 제공해 프로젝트 폴더에 넣어두면 자동로드 -->
+  <script type="module" src="main.js"></script>
 </body>
 </html>
