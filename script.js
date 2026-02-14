@@ -6,12 +6,12 @@ let textureLoader;
 let clock;
 let isPaused = false;
 let currentTime = 0;
-let currentType = 0; // 0:Basic, 1:Flame, 2:Drop, 3:Fade
+let currentType = 0; // 0:Basic, 1:Flame, 2:Ripple, 3:Fade, 4:Droplet
 
 // --- Parameter Defaults ---
 const params = {
-    auraSize: 0.20, // 사이즈 약간 키움 (후광 효과 극대화)
-    auraStrength: 1.5, // 강도 증가
+    auraSize: 0.20,
+    auraStrength: 1.5,
     swimSpeed: 0.5,
     breathSpeed: 0.3,
     convergence: 0.5, 
@@ -34,7 +34,7 @@ const vertexShader = `
     }
 `;
 
-// --- Fragment Shader (Shape Distortion & Halo Layering) ---
+// --- Fragment Shader ---
 const fragmentShader = `
     precision mediump float;
     uniform sampler2D tDiffuse;
@@ -72,7 +72,6 @@ const fragmentShader = `
                    mix(hash(i + vec2(0.0,1.0)), hash(i + vec2(1.0,1.0)), f.x), f.y);
     }
 
-    // FBM: Fine details
     float fbm(vec2 p) {
         float v = 0.0;
         float a = 0.5;
@@ -111,7 +110,7 @@ const fragmentShader = `
         float auraAlpha = 0.0;
         vec3 auraColor = vec3(1.0, 0.8, 0.4); 
 
-        // Center calc
+        // Center coordinates
         vec2 center = vec2(0.5);
         vec2 toCenter = uv - center;
         float radius = length(toCenter);
@@ -119,57 +118,36 @@ const fragmentShader = `
         float normAngle = (angle / 6.28318) + 0.5;
 
         // ==========================================
-        // TYPE 1: Thangka Flame (Shape Distortion)
+        // TYPE 1: Thangka Flame
         // ==========================================
         if (uType == 1) {
-            // [Feature 1] Shape Sculpting via Dynamic Sampling
-            // Instead of a fixed circle, we modulate the sampling distance with Noise.
-            // This creates a jagged, irregular expansion (flames sticking out).
-            
             float baseDist = uAuraSize * growthPhase * 2.5; 
             float borderMask = 0.0;
             
-            // Polar FBM for distortion
             vec2 polarUV = vec2(normAngle * 6.0, radius);
             vec2 q = polarUV;
             q.x += fbm(polarUV * 3.0 + activeTime * 0.5) * 0.2;
             q.y -= activeTime * uSwim; 
+            float shapeNoise = fbm(q * vec2(5.0, 1.0)); 
             
-            // Use this noise to distort the border SHAPE
-            float shapeNoise = fbm(q * vec2(5.0, 1.0)); // Lower frequency for shape
-            
-            // Sampling loop
             const int SAMPLES = 16;
             for(int i=0; i<SAMPLES; i++) {
                 float a = float(i) * 6.28318 / float(SAMPLES);
-                
-                // Dynamic Reach: Fire reaches further where noise is high
-                // shapeNoise varies by angle, creating tongues of fire
                 float reach = baseDist * (0.5 + 1.5 * shapeNoise); 
-                
                 vec2 offset = vec2(cos(a), sin(a)) * reach * 0.5; 
                 borderMask = max(borderMask, texture2D(tDiffuse, uv + offset).a);
             }
             borderMask = smoothstep(0.1, 0.6, borderMask);
 
-            // [Feature 2] Internal Detail Texture
-            // High frequency FBM for fine strands inside the flame
             float detailNoise = fbm(q * vec2(10.0, 2.0)); 
-            
-            // Combine Shape & Detail
             float flameVis = borderMask * detailNoise;
-            flameVis = smoothstep(0.1, 0.9, flameVis); // Increase contrast
+            flameVis = smoothstep(0.1, 0.9, flameVis); 
             
-            // Apply strength
             auraAlpha = flameVis * uStrength;
 
-            // [Feature 3] Halo Layering (No hole punching)
-            // We do NOT subtract alpha here. We will mix later.
-
-            // Color Gradient
-            vec3 c1 = vec3(0.5, 0.0, 0.0); // Deep Red
-            vec3 c2 = vec3(1.0, 0.3, 0.0); // Orange
-            vec3 c3 = vec3(1.0, 0.9, 0.1); // Yellow
+            vec3 c1 = vec3(0.5, 0.0, 0.0);
+            vec3 c2 = vec3(1.0, 0.3, 0.0);
+            vec3 c3 = vec3(1.0, 0.9, 0.1);
             
             vec3 fireCol = mix(c1, c2, smoothstep(0.0, 0.5, detailNoise));
             fireCol = mix(fireCol, c3, smoothstep(0.5, 1.0, detailNoise));
@@ -180,27 +158,88 @@ const fragmentShader = `
         }
 
         // ==========================================
-        // TYPE 2: Droplet (Scattered Particles)
+        // TYPE 4: Real Droplet (New Logic)
+        // ==========================================
+        else if (uType == 4) {
+            // 1. Basic Aura Background (Optional, faint glow)
+            float maxDist = uAuraSize; 
+            float bgMask = 0.0;
+            for(int i=0; i<8; i++) {
+                float a = float(i) * 6.28318 / 8.0;
+                vec2 offset = vec2(cos(a), sin(a)) * maxDist;
+                bgMask = max(bgMask, texture2D(tDiffuse, uv + offset).a);
+            }
+            // Faint background aura to show the boundary
+            auraAlpha = smoothstep(0.1, 0.8, bgMask) * 0.2; 
+
+            // 2. Generate Discrete Droplets
+            float dropsAlpha = 0.0;
+            const float NUM_DROPS = 10.0; // Number of active drops in loop
+            
+            for(float i = 0.0; i < NUM_DROPS; i++) {
+                // Random properties for each drop
+                float seed = i * 12.345;
+                
+                // Time offset creates continuous stream
+                float t = activeTime * uDropSpeed + seed; 
+                
+                // Cycle: 0 -> 1 (Start at center, go out)
+                float cycle = fract(t); 
+                
+                // Random Angle per cycle
+                float cycleIdx = floor(t);
+                float rndAngle = hash(vec2(seed, cycleIdx)) * 6.28318;
+                
+                // Current position: Move outward
+                // Max distance to travel (e.g., 2.0 screen units)
+                float travelDist = cycle * 1.5; 
+                vec2 dropPos = center + vec2(cos(rndAngle), sin(rndAngle)) * travelDist;
+                
+                // Distance field for circle
+                float d = distance(uv, dropPos);
+                
+                // Size: 1/5 to 1/10 (approx 0.1 to 0.2)
+                // Shrink as it goes out: cycle 0 -> size 1, cycle 1 -> size 0
+                float baseSize = uDropSize * 0.15; // Base scale
+                float currentSize = baseSize * (1.2 - cycle); // Shrink over time
+                
+                // Draw Circle (Sharp edge)
+                float circle = smoothstep(currentSize, currentSize - 0.01, d);
+                
+                // Fade out at end of life
+                circle *= smoothstep(1.0, 0.8, cycle);
+                
+                // Accumulate (Max blend)
+                dropsAlpha = max(dropsAlpha, circle);
+            }
+
+            // 3. Combine: Add droplets to the faint aura
+            // 'max' ensures droplets persist even outside the aura border
+            auraAlpha = max(auraAlpha, dropsAlpha * uStrength);
+            
+            // Color: Blue/Cyan
+            auraColor = vec3(0.3, 0.7, 1.0);
+        }
+
+        // ==========================================
+        // TYPE 2: Ripple (Old Droplet Logic)
         // ==========================================
         else if (uType == 2) { 
-            // Expand border
+            // Previous 'Mist/Ripple' logic
             float maxDist = uAuraSize * 2.0; 
             float borderMask = 0.0;
-            for(int i=0; i<12; i++) {
-                float a = float(i) * 6.28318 / 12.0;
+            for(int i=0; i<8; i++) {
+                float a = float(i) * 6.28318 / 8.0;
                 vec2 offset = vec2(cos(a), sin(a)) * maxDist * 0.8;
                 borderMask = max(borderMask, texture2D(tDiffuse, uv + offset).a);
             }
             borderMask = smoothstep(0.1, 0.5, borderMask);
 
-            // Mist Noise
             float radialMove = radius * (10.0 / uDropSize) - activeTime * uDropSpeed * 3.0;
             vec2 noiseUV = vec2(normAngle * 10.0, radialMove * 0.5);
             float fineDetail = fbm(noiseUV);
-            
             float cellLocal = fract(radialMove);
             float dropShape = smoothstep(0.4, 0.5, cellLocal) * smoothstep(0.6, 0.5, cellLocal);
-            
             float mist = borderMask * dropShape * fineDetail * 2.5;
             
             float dirMask = 1.0;
@@ -210,7 +249,7 @@ const fragmentShader = `
             }
 
             auraAlpha = mist * dirMask * uStrength;
-            // No hole punching -> Halo effect
+            auraAlpha *= (1.0 - alpha); 
             auraColor = vec3(0.4, 0.8, 1.0);
         }
 
@@ -242,33 +281,20 @@ const fragmentShader = `
         // ==========================================
         // Final Composition (Halo Effect)
         // ==========================================
-        
-        // Green Convergence (Global)
         vec3 hsv = rgb2hsv(auraColor);
         float targetHue = 0.33; 
         hsv.x = mix(hsv.x, targetHue, uConv * growthPhase * 0.8);
         auraColor = hsv2rgb(hsv);
 
-        // Core Brightness
         float brightness = uCore + (lockPhase * 0.5);
         vec3 bodyColor = texColor.rgb * brightness;
 
-        // [CORE FIX] Halo Layering Logic
-        // Background (Aura) + Foreground (Body)
-        // Result = Body * Alpha + Aura * (1 - Alpha) (Standard Blending)
-        // But since user wants "Halo", we can additively blend or mix.
-        // Let's use mix to simulate body blocking the aura (Backlight).
-        
         vec3 finalAura = auraColor * auraAlpha;
-        
-        // 1. Draw Aura
         vec3 finalColor = finalAura;
         
-        // 2. Draw Body on top (using body alpha)
-        // This ensures the body covers the aura, creating the "behind" look.
+        // Body over Aura (Backlight)
         finalColor = mix(finalColor, bodyColor, alpha);
 
-        // Final Alpha is max of both to keep shape
         float finalAlpha = max(auraAlpha, alpha);
 
         gl_FragColor = vec4(finalColor, finalAlpha);
@@ -424,7 +450,7 @@ function updateSliders() {
     if (currentType === 1) { // Flame
         createSlider(container, '불꽃 높이 (Height)', 'flameHeight', 0.1, 1.0);
         createSlider(container, '온도 (Temp)', 'flameTemp', 0, 1.0);
-    } else if (currentType === 2) { // Drop
+    } else if (currentType === 2 || currentType === 4) { // Ripple or Droplet
         createSlider(container, '속도 (Speed)', 'dropSpeed', 0.1, 5.0);
         createSlider(container, '크기 (Size)', 'dropSize', 0.1, 2.0);
     }
