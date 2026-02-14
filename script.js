@@ -234,7 +234,7 @@ const fragmentShader = `
                 float outerRadius = uDropSize * 0.15 * rndScale * (1.0 - cycle * 0.6);
                 
                 // Ring thickness relative to radius
-                float ringThickness = outerRadius * 0.25; 
+                float ringThickness = outerRadius * 0.05; 
                 float innerRadius = outerRadius - ringThickness;
 
                 float edge = 0.005; // Sharpness
